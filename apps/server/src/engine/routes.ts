@@ -13,6 +13,7 @@ const text = z.string().trim().min(1).max(4000);
 const memorySchema = z.object({ text, source: z.string().trim().min(1).max(200).optional() });
 const goalPatchSchema = z.object({
   status: z.enum(["active", "paused", "completed"]).optional(),
+  projectId: z.string().nullable().optional(),
   milestones: z
     .array(
       z.object({

@@ -14,7 +14,12 @@ import {
   type Idea,
   type Monitor,
   monitorInputSchema,
+  type Routine,
+  type RoutineInput,
+  type RoutinePatch,
+  type RoutineStep,
   type RunEvent,
+  routineInputSchema,
 } from "../../../../packages/domain/src/agent.ts";
 import type {
   ActionProposal,
@@ -31,6 +36,8 @@ import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { backgroundFailure } from "../log.ts";
+import { ProjectsService } from "../projects.ts";
+import { nextRoutineRun } from "../routine-schedule.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
@@ -41,6 +48,7 @@ const date = () => new Date().toISOString();
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 export class AgentService {
   readonly worker: TaskWorker;
+  readonly projects: ProjectsService;
   private maintenance?: ReturnType<typeof setInterval>;
   private refreshing = false;
   constructor(
@@ -52,8 +60,12 @@ export class AgentService {
     readonly browser: BrowserService,
     readonly computer: ComputerService = new ComputerService(db, config),
   ) {
+    this.projects = new ProjectsService(db);
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
-      settled: (owner, task) => this.publishOutcome(owner, task),
+      settled: async (owner, task) => {
+        await this.settleRoutineTask(owner, task);
+        await this.publishOutcome(owner, task);
+      },
     });
   }
   start() {
@@ -110,6 +122,7 @@ export class AgentService {
             );
           });
       }
+      await this.scheduleRoutines();
     } finally {
       this.refreshing = false;
     }
@@ -177,10 +190,21 @@ export class AgentService {
       ),
     };
   }
-  async createTask(owner: string, raw: unknown, idempotencyKey?: string, held = false) {
+  async createTask(
+    owner: string,
+    raw: unknown,
+    idempotencyKey?: string,
+    held = false,
+    metadata: { routineId?: string } = {},
+  ) {
     const input = createTaskSchema.parse(raw);
     if (input.goalId && !(await this.db.get(owner, "goals", input.goalId)))
       throw new AppError("Goal not found", 404);
+    if (input.projectId) {
+      const project = await this.projects.get(owner, input.projectId);
+      if (project.status === "archived")
+        throw new AppError("Archived projects cannot accept tasks", 409);
+    }
     const id = idempotencyKey ? hash(`task:${idempotencyKey}`) : randomUUID();
     const existing = await this.db.get<AgentTask>(owner, "tasks", id);
     if (existing) return existing;
@@ -202,13 +226,22 @@ export class AgentService {
           ? ["Check the source", "Compare with the last observation", "Report a meaningful change"]
           : input.kind === "finance"
             ? ["Validate transactions", "Calculate the summary", "Save your tracker"]
-            : ["Understand the outcome", "Plan the work", "Use connected tools", "Return a result"];
+            : input.kind === "routine"
+              ? ["Load routine context", "Run routine steps", "Save the routine result"]
+              : [
+                  "Understand the outcome",
+                  "Plan the work",
+                  "Use connected tools",
+                  "Return a result",
+                ];
     const task: AgentTask = {
       id,
       title: input.title ?? input.prompt.slice(0, 90),
       prompt: input.prompt,
       kind: input.kind,
       goalId: input.goalId,
+      projectId: input.projectId,
+      routineId: metadata.routineId,
       status: held ? "paused" : "queued",
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
@@ -332,11 +365,13 @@ export class AgentService {
   }
   async createGoal(owner: string, raw: unknown, id?: string) {
     const input = goalInputSchema.parse(raw);
+    if (input.projectId) await this.projects.get(owner, input.projectId);
     const goal: Goal = {
       id: id ?? randomUUID(),
       title: input.title,
       description: input.description,
       category: input.category,
+      projectId: input.projectId,
       status: "active",
       milestones: input.milestones.map((title) => ({ id: randomUUID(), title, done: false })),
       createdAt: date(),
@@ -347,16 +382,227 @@ export class AgentService {
   async updateGoal(
     owner: string,
     id: string,
-    patch: { status?: Goal["status"]; milestones?: Goal["milestones"] },
+    patch: { status?: Goal["status"]; milestones?: Goal["milestones"]; projectId?: string | null },
   ) {
     const goal = await this.db.get<Goal>(owner, "goals", id);
     if (!goal) throw new AppError("Goal not found", 404);
-    const saved = await this.db.put(owner, "goals", { ...goal, ...patch });
+    const { projectId, ...rest } = patch;
+    if (projectId) await this.projects.get(owner, projectId);
+    const saved = await this.db.put(owner, "goals", {
+      ...goal,
+      ...rest,
+      ...(projectId === undefined ? {} : projectId ? { projectId } : { projectId: undefined }),
+    });
     if (patch.status === "paused")
       for (const task of await this.db.list<AgentTask>(owner, "tasks"))
         if (task.goalId === id && !terminal.has(task.status) && task.status !== "paused")
           await this.control(owner, task.id, "pause");
     return saved;
+  }
+
+  async listRoutines(owner: string) {
+    return (await this.db.list<Routine>(owner, "routines"))
+      .filter((routine) => !routine.archivedAt)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getRoutine(owner: string, id: string) {
+    const routine = await this.db.get<Routine>(owner, "routines", id);
+    if (!routine || routine.archivedAt) throw new AppError("Routine not found", 404);
+    return routine;
+  }
+
+  async routineDetail(owner: string, id: string) {
+    const routine = await this.getRoutine(owner, id);
+    const runs = (await this.db.list<AgentTask>(owner, "tasks"))
+      .filter((task) => task.routineId === id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 20);
+    const events = await this.db.list<RunEvent>(owner, "run-events");
+    return {
+      routine,
+      runs: runs.map((task) => ({
+        task,
+        events: events
+          .filter((event) => event.taskId === task.id)
+          .sort((a, b) => a.date.localeCompare(b.date)),
+      })),
+    };
+  }
+
+  async createRoutine(owner: string, raw: RoutineInput, id?: string) {
+    const input = routineInputSchema.parse(raw);
+    if (input.projectId) await this.projects.get(owner, input.projectId);
+    if (input.steps.some((step) => step.capability === "project.summary") && !input.projectId)
+      throw new AppError("Choose a project for the project summary step", 422);
+    const stamp = date();
+    const routine: Routine = {
+      id: id ?? randomUUID(),
+      ...input,
+      steps: input.steps.map((step, index) => ({ ...step, id: String(index + 1) })),
+      createdAt: stamp,
+      updatedAt: stamp,
+      nextRunAt: input.enabled ? nextRoutineRun(input.schedule) : null,
+      pendingRunAt: null,
+    };
+    await this.db.insertIfAbsent(owner, "routines", routine);
+    return (await this.db.get<Routine>(owner, "routines", routine.id)) ?? routine;
+  }
+
+  async updateRoutine(owner: string, id: string, patch: RoutinePatch) {
+    const current = await this.getRoutine(owner, id);
+    const schedule = patch.schedule ?? current.schedule;
+    const projectId =
+      patch.projectId === undefined ? current.projectId : (patch.projectId ?? undefined);
+    if (projectId) await this.projects.get(owner, projectId);
+    const input = routineInputSchema.parse({
+      name: patch.name ?? current.name,
+      description: patch.description ?? current.description,
+      enabled: patch.enabled ?? current.enabled,
+      schedule,
+      steps: (patch.steps ?? current.steps).map(({ capability, title }) => ({ capability, title })),
+      projectId,
+    });
+    if (input.steps.some((step) => step.capability === "project.summary") && !input.projectId)
+      throw new AppError("Choose a project for the project summary step", 422);
+    const reschedule = (patch.enabled === true && !current.enabled) || patch.schedule !== undefined;
+    const saved: Routine = {
+      ...current,
+      ...input,
+      steps: input.steps.map((step, index) => ({ ...step, id: String(index + 1) })),
+      updatedAt: date(),
+      nextRunAt: input.enabled
+        ? reschedule
+          ? nextRoutineRun(input.schedule)
+          : current.nextRunAt
+        : null,
+    };
+    await this.db.put(owner, "routines", saved);
+    return saved;
+  }
+
+  async archiveRoutine(owner: string, id: string) {
+    const current = await this.getRoutine(owner, id);
+    const saved = {
+      ...current,
+      enabled: false,
+      nextRunAt: null,
+      archivedAt: date(),
+      updatedAt: date(),
+    };
+    await this.db.put(owner, "routines", saved);
+    return saved;
+  }
+
+  async resolveRoutine(owner: string, name: string) {
+    const all = await this.listRoutines(owner);
+    const matches = all.filter(
+      (routine) =>
+        routine.id === name ||
+        routine.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+    );
+    if (matches.length === 1) return { routine: matches[0] };
+    if (matches.length > 1)
+      return {
+        ambiguous: true as const,
+        candidates: matches.map(({ id, name }) => ({ id, name })),
+      };
+    return { routine: null };
+  }
+
+  async runRoutine(owner: string, id: string, scheduledFor?: string) {
+    const routine = await this.getRoutine(owner, id);
+    const occurrence = scheduledFor ?? `manual:${randomUUID()}`;
+    const task = await this.createTask(
+      owner,
+      {
+        title: `Routine · ${routine.name}`,
+        prompt: `Execute the saved routine “${routine.name}” using its ordered, safe read and planning steps. Record each step and save an honest result.`,
+        kind: "routine",
+        projectId: routine.projectId,
+        input: { routineId: routine.id, occurrence },
+      },
+      `routine:${routine.id}:${occurrence}`,
+      false,
+      { routineId: routine.id },
+    );
+    const latest = await this.db.get<Routine>(owner, "routines", id);
+    if (latest && !latest.archivedAt)
+      await this.db.put(owner, "routines", {
+        ...latest,
+        lastRunAt: date(),
+        lastTaskId: task.id,
+        lastRunStatus: task.status,
+        updatedAt: date(),
+      });
+    return task;
+  }
+
+  private async scheduleRoutines() {
+    const now = Date.now();
+    for (const { owner, value: routine } of await this.db.scan<Routine>("routines")) {
+      if (routine.archivedAt) continue;
+      try {
+        if (routine.pendingRunAt) {
+          const task = await this.runRoutine(owner, routine.id, routine.pendingRunAt);
+          await this.db.compareAndSwap(
+            owner,
+            "routines",
+            routine.id,
+            { pendingRunAt: routine.pendingRunAt },
+            {
+              pendingRunAt: null,
+              lastRunAt: routine.pendingRunAt,
+              lastTaskId: task.id,
+              lastRunStatus: task.status,
+            },
+          );
+          continue;
+        }
+        if (!routine.enabled || !routine.nextRunAt || Date.parse(routine.nextRunAt) > now) continue;
+        const scheduledFor = routine.nextRunAt;
+        const nextRunAt = nextRoutineRun(
+          routine.schedule,
+          new Date(Math.max(Date.parse(scheduledFor), now) + 1000),
+        );
+        const claimed = await this.db.compareAndSwap<Routine>(
+          owner,
+          "routines",
+          routine.id,
+          { enabled: true, nextRunAt: scheduledFor },
+          { pendingRunAt: scheduledFor, nextRunAt, updatedAt: date() },
+        );
+        if (!claimed) continue;
+        const task = await this.runRoutine(owner, routine.id, scheduledFor);
+        await this.db.compareAndSwap(
+          owner,
+          "routines",
+          routine.id,
+          { pendingRunAt: scheduledFor },
+          {
+            pendingRunAt: null,
+            lastRunAt: scheduledFor,
+            lastTaskId: task.id,
+            lastRunStatus: task.status,
+          },
+        );
+      } catch (error) {
+        backgroundFailure("schedule routine", error);
+      }
+    }
+  }
+
+  private async settleRoutineTask(owner: string, task: AgentTask) {
+    if (!task.routineId) return;
+    const routine = await this.db.get<Routine>(owner, "routines", task.routineId);
+    if (!routine) return;
+    await this.db.compareAndSwap(
+      owner,
+      "routines",
+      routine.id,
+      { lastTaskId: task.id },
+      { lastRunAt: task.updatedAt, lastRunStatus: task.status },
+    );
   }
   async createMonitor(owner: string, raw: unknown, idempotencyKey?: string) {
     const input = monitorInputSchema.parse(raw);
@@ -822,8 +1068,193 @@ export class AgentService {
       });
       return this.finish(task, context, artifact.summary);
     }
+    if (task.kind === "routine") return this.executeRoutine(owner, task, context);
     return executeModelTask(this, owner, task, context);
   }
+
+  private async executeRoutine(owner: string, task: AgentTask, context: TaskContext) {
+    const routineId = task.routineId ?? String(task.input.routineId ?? "");
+    const routine = await this.getRoutine(owner, routineId);
+    await context.event("status", "Routine started", routine.name);
+    const plan = routine.steps.map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: "pending" as const,
+    }));
+    const results: { capability: RoutineStep["capability"]; title: string; data: unknown }[] = [];
+    const localDate = (value: Date, timeZone: string) => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(value);
+      const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      return `${fields.year}-${fields.month}-${fields.day}`;
+    };
+    for (const [index, step] of routine.steps.entries()) {
+      await context.guard();
+      const currentPlan = plan.map((item, i) => ({
+        ...item,
+        status:
+          i < index
+            ? ("succeeded" as const)
+            : i === index
+              ? ("running" as const)
+              : ("pending" as const),
+      }));
+      await context.checkpoint({ plan: currentPlan });
+      await context.event("step", step.title, `Running ${step.capability}`);
+      try {
+        let data: unknown;
+        if (step.capability === "calendar.today") {
+          const snapshot = await this.workspace.snapshot(owner);
+          const today = localDate(new Date(), routine.schedule.timeZone);
+          const events = snapshot.events
+            .filter((event) => {
+              if (event.allDay) return event.start === today;
+              const start = Date.parse(event.start);
+              return (
+                Number.isFinite(start) &&
+                localDate(new Date(start), event.timeZone || routine.schedule.timeZone) === today
+              );
+            })
+            .slice(0, 20)
+            .map(({ title, start, end, allDay, location }) => ({
+              title,
+              start,
+              end,
+              allDay,
+              location,
+            }));
+          data = { date: today, events };
+        } else if (step.capability === "mail.unread") {
+          const snapshot = await this.workspace.snapshot(owner);
+          const messages = snapshot.mail
+            .filter((mail) => mail.unread)
+            .slice(0, 20)
+            .map(({ sender, subject, date: receivedAt, body }) => ({
+              sender,
+              subject,
+              receivedAt,
+              excerpt: body.slice(0, 240),
+            }));
+          data = { unreadCount: messages.length, messages };
+        } else if (step.capability === "tasks.open") {
+          const tasks = (await this.db.list<AgentTask>(owner, "tasks"))
+            .filter((item) => item.id !== task.id && !terminal.has(item.status))
+            .filter((item) => !routine.projectId || item.projectId === routine.projectId)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            .slice(0, 20)
+            .map(({ id, title, status, updatedAt }) => ({ id, title, status, updatedAt }));
+          data = { openCount: tasks.length, tasks };
+        } else if (step.capability === "project.summary") {
+          if (!routine.projectId) throw new AppError("This step requires a project", 422);
+          const project = await this.projects.context(owner, routine.projectId);
+          data = {
+            name: project.project.name,
+            description: project.project.description,
+            instructions: project.project.instructions,
+            tasks: project.tasks.map(({ title, status, updatedAt }) => ({
+              title,
+              status,
+              updatedAt,
+            })),
+            goals: project.goals.map(({ title, status, milestones }) => ({
+              title,
+              status,
+              completedMilestones: milestones.filter((milestone) => milestone.done).length,
+              milestoneCount: milestones.length,
+            })),
+            notes: project.notes
+              .slice(0, 10)
+              .map(({ title, body }) => ({ title, excerpt: body.slice(0, 240) })),
+            links: project.links.slice(0, 10).map(({ title, url }) => ({ title, url })),
+          };
+        } else {
+          const taskData = results.find((result) => result.capability === "tasks.open")?.data as
+            | { tasks?: { title: string; status: string }[] }
+            | undefined;
+          const eventData = results.find((result) => result.capability === "calendar.today")
+            ?.data as { events?: { title: string; start: string; allDay: boolean }[] } | undefined;
+          const mailData = results.find((result) => result.capability === "mail.unread")?.data as
+            | { unreadCount?: number; messages?: { subject: string; sender: string }[] }
+            | undefined;
+          const projectData = results.find((result) => result.capability === "project.summary")
+            ?.data as { name?: string; tasks?: { title: string; status: string }[] } | undefined;
+          const attentionTasks = (taskData?.tasks ?? []).filter((item) =>
+            ["waiting_input", "waiting_approval", "failed"].includes(item.status),
+          );
+          const priorities = [
+            ...attentionTasks
+              .slice(0, 3)
+              .map((item) => `${item.status.replace("_", " ")}: ${item.title}`),
+            ...(eventData?.events?.slice(0, 2).map((item) => `Calendar: ${item.title}`) ?? []),
+            ...(mailData?.messages
+              ?.slice(0, 2)
+              .map((item) => `Unread email from ${item.sender}: ${item.subject}`) ?? []),
+            ...(projectData?.tasks
+              ?.slice(0, 2)
+              .map((item) => `Project task (${item.status}): ${item.title}`) ?? []),
+          ];
+          data = {
+            generatedAt: date(),
+            project: projectData?.name,
+            priorities: priorities.length
+              ? priorities
+              : ["No priority items were returned by the selected steps."],
+            sources: results.map(({ capability }) => capability),
+          };
+        }
+        results.push({ capability: step.capability, title: step.title, data });
+        await context.event("observation", step.title, JSON.stringify(data).slice(0, 1600));
+        await context.checkpoint({
+          plan: routine.steps.map((item, i) => ({
+            id: item.id,
+            title: item.title,
+            status: i <= index ? ("succeeded" as const) : ("pending" as const),
+          })),
+        });
+      } catch (error) {
+        await context.checkpoint({
+          plan: routine.steps.map((item, i) => ({
+            id: item.id,
+            title: item.title,
+            status:
+              i < index
+                ? ("succeeded" as const)
+                : i === index
+                  ? ("failed" as const)
+                  : ("pending" as const),
+          })),
+        });
+        await context.event(
+          "error",
+          `${step.title} failed`,
+          error instanceof Error ? error.message : "Routine step failed",
+        );
+        throw error;
+      }
+    }
+    const planResult = results.find((result) => result.capability === "daily.plan")?.data;
+    const summary =
+      typeof planResult === "object" && planResult && "priorities" in planResult
+        ? `${routine.name} completed. ${String((planResult as { priorities: string[] }).priorities.join("; "))}`
+        : `${routine.name} completed ${results.length} step${results.length === 1 ? "" : "s"}.`;
+    const artifact = await this.artifact(
+      owner,
+      task,
+      "plan",
+      `${routine.name} run`,
+      summary,
+      { routineId: routine.id, projectId: routine.projectId, steps: results },
+      `routine:${String(task.input.occurrence ?? task.id)}`,
+    );
+    await context.checkpoint({ artifactIds: [...new Set([...task.artifactIds, artifact.id])] });
+    await context.event("status", "Routine completed", routine.name);
+    return this.finish(task, context, summary);
+  }
+
   async finish(task: AgentTask, context: TaskContext, result: string) {
     await context.guard();
     await context.event("result", "Work completed", result);

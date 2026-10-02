@@ -14,11 +14,14 @@ import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config } from "./config.ts";
 import type { Store } from "./db.ts";
+import { ConversationAgent } from "./engine/conversation.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { projectRoutes } from "./projects-routes.ts";
+import { routineRoutes } from "./routine-routes.ts";
 import { WorkspaceService } from "./workspace.ts";
 
 export async function createApp(
@@ -150,6 +153,8 @@ export async function createApp(
     return c.json(snapshot);
   });
   app.route("/api/agent", agentRoutes(agent));
+  app.route("/api/projects", projectRoutes(agent));
+  app.route("/api/routines", routineRoutes(agent));
   app.route("/api/computer", computerRoutes(computer, files));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));
   app.get("/api/calendar/events", async (c) => {
@@ -203,6 +208,8 @@ export async function createApp(
     );
   });
   app.get("/api/main-thread", async (c) => {
+    if (config.richThreadsEnabled === false)
+      throw new AppError("Saved cloud chats are not configured; local chat is available", 503);
     const owner = c.get("owner");
     await db.insertIfAbsent(owner, "conversation-settings", {
       id: "main",
@@ -224,6 +231,19 @@ export async function createApp(
       );
     }
     return c.json({ threadId: main.threadId, existing: true });
+  });
+  app.post("/api/local-chat", async (c) => {
+    if (config.agentBackend !== "sample")
+      throw new AppError("Local sample chat is only available in sample mode", 409);
+    const input = z
+      .object({
+        prompt: z.string().trim().min(1).max(12000),
+        requestId: z.string().min(1).max(200),
+      })
+      .parse(await c.req.json());
+    const owner = await auth.owner(c.req.header("authorization"));
+    const conversation = new ConversationAgent(config, agent, owner);
+    return c.json(await conversation.sampleReply(input.prompt, `local-chat:${input.requestId}`));
   });
   app.get("/api/conversation", async (c) =>
     c.json((await db.get(c.get("owner"), "conversations", "default")) ?? { messages: [] }),

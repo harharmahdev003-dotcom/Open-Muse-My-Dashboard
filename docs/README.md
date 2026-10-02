@@ -9,6 +9,10 @@ The demos follow a request from chat to the agent's inline browser, then show ho
 ## Guides
 
 - [Quick start and architecture](../README.md)
+- [Using OpenMuse day to day](DAILY_WORKFLOW.md)
+- [Start OpenMuse on Windows](WINDOWS-START.md)
+- [Project workspaces](PROJECTS.md)
+- [Scheduled routines](ROUTINES.md)
 - [Native iOS / Android / web setup](../apps/mobile/README.md)
 - [Browser worker, API, persistence, and network boundary](../apps/worker/README.md)
 - [Linux computer, terminal, and workspace files](COMPUTER.md)

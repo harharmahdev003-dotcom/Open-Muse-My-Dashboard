@@ -6,6 +6,9 @@ The native and web agent core runs locally. This inventory describes the current
 
 | Area | Current implementation | Remaining extension |
 | --- | --- | --- |
+| Daily command center | Home brings today's calendar, inbox, pending reviews, open task count, active task status, recent activity, goal milestone progress, and project/routine summaries together. | Calendar-aware automatic time blocking and Windows desktop control are not implemented. |
+| Projects | Owner-scoped project workspaces with tasks, goals, notes, links, files, instructions, status/archive, and bounded activity/context. | Sharing, collaboration, and external project integrations. See [Projects](PROJECTS.md). |
+| Routines | Durable scheduled or manual tasks with time-zone-aware daily/weekly schedules and an allowlist of calendar, unread mail, open tasks, project summary, and daily planning steps. | Arbitrary workflows, push alerts, and host-computer actions. See [Routines](ROUTINES.md). |
 | Chat / delegated work | Native CopilotKit chat, server tools, durable tasks and confirmed outcomes | Live model/provider acceptance testing |
 | Ideas / personal context | Source-backed mail/goal rules, accept/edit/dismiss, identity, editable/forgettable memories | Broader model-derived cross-connector suggestions |
 | Goals / Tracking | Milestones, recurring watches, observations, retry/backoff, pause and cancellation | Adaptive long-term planning and calendar-driven reminders |
@@ -16,7 +19,7 @@ The native and web agent core runs locally. This inventory describes the current
 | Generated results | Plans/reports/comparisons, finance CSV metrics, and scripts in the private Linux workspace | Managed tool installation/versioning and image/audio generation |
 | Notifications | Durable in-app inbox, source-linked change alerts, restart reconciliation | APNs/FCM/device push delivery |
 | Connectors | Searchable capability/status catalogue, Google connection, browser worker | Plaid, health, Instagram, WhatsApp and partner APIs |
-| OpenBot | Disabled adapter with pinned protocol/identity tests | Live session bridge, routines and computer backend wiring |
+| OpenBot | Disabled adapter with pinned protocol/identity tests | Live session bridge and computer backend wiring |
 
 The Linux computer is disabled until configured on the server and has no network access. It is a single-owner container with a persistent `/workspace`, separate from the browser worker; see [computer setup and limits](COMPUTER.md). It is not a graphical desktop or a full OS VM.
 

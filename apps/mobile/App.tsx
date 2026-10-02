@@ -3,11 +3,14 @@ import { StatusBar } from "expo-status-bar";
 import {
   Bell,
   Check,
+  FolderOpen,
+  House,
   Lightbulb,
   type LucideIcon,
   Menu,
   MessageCircle,
   PanelsTopLeft,
+  Repeat,
   Shapes,
   SquareCheck,
   X,
@@ -37,25 +40,32 @@ import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
-import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
+import { ProjectsScreen, RoutinesScreen } from "./src/projects-routines";
+import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen, TodayScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
+  { id: "today", label: "Today", icon: House },
   { id: "chat", label: "Chat", icon: MessageCircle },
   { id: "activity", label: "Activity", icon: PanelsTopLeft },
   { id: "ideas", label: "Ideas", icon: Lightbulb },
   { id: "goals", label: "Goals", icon: SquareCheck },
+  { id: "projects", label: "Projects", icon: FolderOpen },
+  { id: "routines", label: "Routines", icon: Repeat },
   { id: "apps", label: "Apps", icon: Shapes },
 ];
 const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
+  today: { title: "Today", subtitle: "A clear view of what matters today." },
   activity: { title: "Activity", subtitle: "Plans, progress, decisions and results." },
   ideas: { title: "Ideas", subtitle: "Useful next steps, grounded in your world." },
   goals: {
     title: "Goals",
     subtitle: "Longer-term goals and things to keep an eye on.",
   },
+  projects: { title: "Projects", subtitle: "Keep related tasks, notes, files and goals together." },
+  routines: { title: "Routines", subtitle: "Schedule safe, repeatable work through OpenMuse." },
   apps: {
     title: "Apps",
     subtitle: "Connections, capabilities and what your agent remembers.",
@@ -144,7 +154,7 @@ export default function App() {
 function WorkspaceApp({ token }: { token: string }) {
   const api = useMemo(() => new MuseApi(token), [token]);
   const [workspace, setWorkspace] = useState<Workspace>();
-  const [section, setSection] = useState<Section>("chat");
+  const [section, setSection] = useState<Section>("today");
   const [detail, setDetail] = useState<Detail>();
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
@@ -169,8 +179,7 @@ function WorkspaceApp({ token }: { token: string }) {
     return () => clearTimeout(timer);
   }, [toast]);
   const navigate = useCallback(
-    (next: Section) =>
-      setSection(next === "today" ? "chat" : next === "connections" ? "apps" : next),
+    (next: Section) => setSection(next === "connections" ? "apps" : next),
     [],
   );
   const open = useCallback((next: Detail) => setDetail(next), []);
@@ -273,21 +282,27 @@ function WorkspaceShell({
       : "Here when you need me";
   const title = titles[section] || titles.apps;
   const Screen =
-    section === "mail"
-      ? MailScreen
-      : section === "calendar"
-        ? CalendarScreen
-        : section === "browser"
-          ? BrowserScreen
-          : section === "files"
-            ? FilesScreen
-            : section === "activity"
-              ? AgentActivityScreen
-              : section === "ideas"
-                ? IdeasScreen
-                : section === "goals"
-                  ? GoalsScreen
-                  : AppsScreen;
+    section === "today"
+      ? TodayScreen
+      : section === "mail"
+        ? MailScreen
+        : section === "calendar"
+          ? CalendarScreen
+          : section === "browser"
+            ? BrowserScreen
+            : section === "files"
+              ? FilesScreen
+              : section === "activity"
+                ? AgentActivityScreen
+                : section === "ideas"
+                  ? IdeasScreen
+                  : section === "goals"
+                    ? GoalsScreen
+                    : section === "projects"
+                      ? ProjectsScreen
+                      : section === "routines"
+                        ? RoutinesScreen
+                        : AppsScreen;
   const utility = ["mail", "calendar", "browser", "files"].includes(section);
   return (
     <>
@@ -418,7 +433,19 @@ function WorkspaceShell({
                   ))}
                 </>
               ) : (
-                <ChatScreen prompt={prompt} active={section === "chat"} />
+                <>
+                  {threadsError ? (
+                    <View style={{ gap: 7, paddingBottom: 10 }}>
+                      <Text style={s.small}>
+                        Saved cloud chats are unavailable. You can keep chatting with local history.
+                      </Text>
+                      <Button small onPress={retryThreads}>
+                        Retry saved chats
+                      </Button>
+                    </View>
+                  ) : null}
+                  <ChatScreen prompt={prompt} active={section === "chat"} />
+                </>
               )}
             </View>
           </View>

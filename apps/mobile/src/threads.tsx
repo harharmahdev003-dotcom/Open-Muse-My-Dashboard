@@ -37,7 +37,8 @@ const ThreadContext = createContext<{
 export function ThreadsProvider({ children }: { children: ReactNode }) {
   const { workspace, navigate, api } = useWorkspace();
   const handledPrompt = useRef(0);
-  const enabled = workspace.runtime.richThreads === true;
+  const configured = workspace.runtime.richThreads === true;
+  const [enabled, setEnabled] = useState(configured);
   const [selection, setSelection] = useState<Selection>({ id: "local", existing: false });
   const [visited, setVisited] = useState<Selection[]>([]);
   const [mainId, setMainId] = useState("local");
@@ -60,7 +61,11 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       })
       .catch((e) => {
-        if (active) setError(e instanceof Error ? e.message : String(e));
+        if (active) {
+          setError(e instanceof Error ? e.message : String(e));
+          setLoading(false);
+          setEnabled(false);
+        }
       });
     return () => {
       active = false;
@@ -84,7 +89,12 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         visited,
         loading,
         error,
-        retry: () => setAttempt((n) => n + 1),
+        retry: () => {
+          setError("");
+          setLoading(true);
+          setEnabled(configured);
+          setAttempt((n) => n + 1);
+        },
         selection,
         select,
         start: () => select({ id: newThreadId(), existing: false }),
@@ -283,6 +293,16 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
           </>
         ) : (
           <>
+            {mainError ? (
+              <View style={{ gap: 8 }}>
+                <Text style={s.muted}>
+                  Saved cloud chats are unavailable. Main chat still works with local history.
+                </Text>
+                <Button small onPress={retry}>
+                  Retry saved chats
+                </Button>
+              </View>
+            ) : null}
             <LinkRow
               icon={MessageCircle}
               title="Main chat"

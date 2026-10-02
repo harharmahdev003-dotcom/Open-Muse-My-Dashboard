@@ -132,7 +132,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                 : snapshot?.status === "stopped"
                   ? "Stopped · your files are saved"
                   : snapshot?.status === "unconfigured"
-                    ? "Set up the computer to get started"
+                    ? "Docker is not enabled for this OpenMuse server"
                     : snapshot?.status === "error"
                       ? "Connection needs attention"
                       : "Connecting…"}
@@ -141,6 +141,13 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
           {!snapshot && !error && <ActivityIndicator color={colors.blueDark} />}
         </View>
         {!!snapshot?.message && <Text style={s.small}>{snapshot.message}</Text>}
+        {snapshot?.status === "unconfigured" && (
+          <Text style={s.small}>
+            This is a private Linux command workspace, not control of your Windows desktop. It needs
+            Docker, COMPUTER_ENABLED=true, and a built openmuse-computer image. The Browser tab is
+            separate and needs the browser worker.
+          </Text>
+        )}
         {snapshot?.enabled && (
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {running ? (
@@ -228,7 +235,8 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   Run command
                 </Button>
                 <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
-                  Runs on your computer. Network access is off. Use Browser for the web.
+                  Runs inside the isolated Linux container, not on your Windows desktop. Network
+                  access is off; use Browser for the web.
                 </Text>
               </View>
             ) : (

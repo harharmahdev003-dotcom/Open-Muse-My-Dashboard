@@ -38,8 +38,11 @@ import type {
   CalendarEvent,
   EmailDraft,
 } from "../../../packages/domain/src";
+import { useAgentWorkspace } from "./agent-workspace";
 import { API_URL } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
+import { DailyProjectsRoutines } from "./projects-routines";
+import { useMuseThread } from "./threads";
 import {
   Button,
   Card,
@@ -69,6 +72,7 @@ function eventDate(event: CalendarEvent) {
 }
 export function TodayScreen() {
   const { workspace: w, navigate, open, ask } = useWorkspace();
+  const { data: agent } = useAgentWorkspace();
   const wide = useWindowDimensions().width > 1180;
   const pending = w.actions.filter((a) => a.status === "awaiting_review");
   const unread = w.mail.filter((m) => m.unread);
@@ -76,6 +80,10 @@ export function TodayScreen() {
   const events = w.events
     .filter((e) => eventDate(e) === today)
     .sort((a, b) => a.start.localeCompare(b.start));
+  const activeTasks = (agent?.tasks || []).filter((task) =>
+    ["queued", "running", "waiting_approval", "waiting_input", "scheduled"].includes(task.status),
+  );
+  const activeGoals = (agent?.goals || []).filter((goal) => goal.status === "active");
   return (
     <View style={{ gap: 25 }}>
       <View
@@ -207,6 +215,14 @@ export function TodayScreen() {
             section: "activity" as const,
             tint: colors.lavender,
           },
+          {
+            label: "OPEN TASKS",
+            value: activeTasks.length,
+            note: "Pick up where you left off",
+            icon: Clock3,
+            section: "activity" as const,
+            tint: colors.orange,
+          },
         ].map((item) => (
           <Pressable
             key={item.label}
@@ -319,21 +335,55 @@ export function TodayScreen() {
       </View>
       <View style={{ flexDirection: wide ? "row" : "column", gap: 22 }}>
         <Card style={{ flex: 1, backgroundColor: "#F0F0E7" }}>
-          <SectionHeading title="A hand with the little things" />
-          <Text style={[s.muted, { marginBottom: 15 }]}>
-            Start with a thought. We’ll take it from there.
+          <SectionHeading
+            title="Your focus"
+            action={activeTasks.length ? "All activity" : undefined}
+            onPress={() => navigate("activity")}
+          />
+          <Text style={[s.muted, { marginBottom: 9 }]}>
+            Ongoing and waiting work, from your saved tasks.
           </Text>
-          {[
-            "What needs my attention today?",
-            "Help me catch up on my inbox",
-            "Show my recent documents",
-          ].map((prompt) => (
+          {activeTasks.slice(0, 3).map((task) => (
+            <Pressable
+              key={task.id}
+              onPress={() => open({ type: "task", taskId: task.id })}
+              style={[
+                s.between,
+                { borderTopWidth: 1, borderTopColor: "#E1E2D9", paddingVertical: 12 },
+              ]}
+            >
+              <View style={{ flex: 1, gap: 3, paddingRight: 12 }}>
+                <Text numberOfLines={1} style={[s.text, { fontSize: 12, fontWeight: "600" }]}>
+                  {task.title}
+                </Text>
+                <Text style={s.small}>
+                  {task.status === "waiting_approval"
+                    ? "Waiting for your review"
+                    : task.status === "waiting_input"
+                      ? "Needs your input"
+                      : task.status === "running"
+                        ? task.plan.find((step) => step.status === "running")?.title ||
+                          "In progress"
+                        : task.status === "scheduled"
+                          ? "Scheduled"
+                          : "Queued"}
+                </Text>
+              </View>
+              <ArrowUpRight size={15} color={colors.muted} />
+            </Pressable>
+          ))}
+          {!activeTasks.length && (
+            <Text style={[s.muted, { paddingVertical: 8 }]}>
+              No open tasks. Your next step can start here.
+            </Text>
+          )}
+          {["What needs my attention today?", "Help me catch up on my inbox"].map((prompt) => (
             <Pressable
               key={prompt}
               onPress={() => ask(prompt)}
               style={[
                 s.between,
-                { borderTopWidth: 1, borderTopColor: "#E1E2D9", paddingVertical: 13 },
+                { borderTopWidth: 1, borderTopColor: "#E1E2D9", paddingVertical: 12 },
               ]}
             >
               <Text style={[s.text, { fontSize: 12 }]}>{prompt}</Text>
@@ -380,6 +430,52 @@ export function TodayScreen() {
           )}
         </Card>
       </View>
+      <Card>
+        <SectionHeading
+          title="Goals in progress"
+          action={activeGoals.length ? "Open goals" : undefined}
+          onPress={() => navigate("goals")}
+        />
+        {activeGoals.length ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+            {activeGoals.slice(0, 3).map((goal) => {
+              const completed = goal.milestones.filter((milestone) => milestone.done).length;
+              return (
+                <Pressable
+                  key={goal.id}
+                  onPress={() => navigate("goals")}
+                  style={{
+                    flex: 1,
+                    minWidth: 150,
+                    padding: 14,
+                    borderRadius: 14,
+                    backgroundColor: "#F5F6F3",
+                  }}
+                >
+                  <Text numberOfLines={1} style={[s.text, { fontSize: 12, fontWeight: "600" }]}>
+                    {goal.title}
+                  </Text>
+                  <Text style={[s.small, { marginTop: 4 }]}>
+                    {goal.milestones.length
+                      ? `${completed} of ${goal.milestones.length} milestones complete`
+                      : goal.category}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <Empty
+            icon={CheckCheck}
+            title="No active goals yet"
+            detail="Add a goal to keep longer-term progress visible alongside your day."
+          />
+        )}
+      </Card>
+      <DailyProjectsRoutines
+        onProjects={() => navigate("projects")}
+        onRoutines={() => navigate("routines")}
+      />
     </View>
   );
 }
@@ -1172,6 +1268,7 @@ export function ActivityScreen() {
 }
 export function ConnectionsScreen({ query = "" }: { query?: string }) {
   const { workspace: w, api, refresh, notify, open } = useWorkspace();
+  const { error: threadError } = useMuseThread();
   const [selected, setSelected] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1228,14 +1325,6 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
       color: "#1987CF",
       connected: w.connections.some((c) => c.id === "browser" && c.status === "connected"),
       group: "browser",
-    },
-    {
-      id: "openbot",
-      name: "OpenBot",
-      icon: Sparkles,
-      color: "#6866A6",
-      connected: false,
-      group: "openbot",
     },
   ].filter((row) => `${row.name} ${row.group}`.toLowerCase().includes(query.toLowerCase()));
   return (
@@ -1296,7 +1385,11 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                         color: row.group === "google" ? colors.blueDark : colors.muted,
                       }}
                     >
-                      {row.group === "google" ? "Connect" : "Setup"}
+                      {row.group === "google"
+                        ? w.mode === "sample"
+                          ? "Sample"
+                          : "Connect"
+                        : "Offline"}
                     </Text>
                   )}
                 </Pressable>
@@ -1306,38 +1399,58 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
         );
       })}
       {!rows.length && <Text style={s.muted}>No matching connectors.</Text>}
+      <Card style={{ gap: 6 }}>
+        <Text style={s.text}>OpenBot · extension point</Text>
+        <Text style={s.small}>
+          No live OpenBot server is configured. You do not need OpenBot for OpenMuse chat, projects,
+          routines, sample mail, or tasks.
+        </Text>
+      </Card>
       {selected && (
         <Sheet
-          title={selected === "google" ? "Google connections" : "OpenBot"}
-          subtitle={selected === "google" ? google?.account : "A computer for your agent"}
+          title="Google connections"
+          subtitle={google?.account}
           onClose={() => setSelected(undefined)}
         >
           {selected === "google" ? (
             <View style={{ gap: 18 }}>
-              <Text style={s.muted}>
-                Bring Gmail and Google Calendar into your conversations. Choose read access, then
-                enable sending and editing when you need it.
-              </Text>
+              {w.mode === "sample" ? (
+                <Text style={s.muted}>
+                  This local sample uses fictional Gmail and Calendar data. It cannot connect your
+                  Google account. Real Google sign-in needs a live workspace plus Google OAuth
+                  client credentials and a public callback URL configured by the server operator.
+                </Text>
+              ) : (
+                <Text style={s.muted}>
+                  Connect Gmail and Calendar with read access first. Sending and event changes use
+                  OpenMuse review. If server OAuth credentials are missing, the error will name the
+                  required settings.
+                </Text>
+              )}
               <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
                 {google?.capabilities.map((cap) => (
                   <Chip key={cap}>{capabilityLabel(cap)}</Chip>
                 ))}
               </View>
               <ErrorNotice error={error} />
-              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
-                Connect Google
-              </Button>
-              <Button busy={busy} onPress={() => void connect("write")}>
-                Enable sending & editing
-              </Button>
-              {connected && (
+              {w.mode === "live" ? (
+                <>
+                  <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+                    Connect Google
+                  </Button>
+                  <Button busy={busy} onPress={() => void connect("write")}>
+                    Enable sending & editing
+                  </Button>
+                </>
+              ) : null}
+              {connected && w.mode === "live" && (
                 <Button busy={busy} danger onPress={() => void disconnect()}>
                   Disconnect Google
                 </Button>
               )}
               <SettingsLine
-                label="Environment"
-                value={w.mode === "sample" ? "Local · example data" : "Live workspace"}
+                label="Workspace mode · status"
+                value={w.mode === "sample" ? "Local sample · fictional data" : "Live workspace"}
               />
               <SettingsLine
                 label="Assistant"
@@ -1351,7 +1464,13 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
               />
               <SettingsLine
                 label="Rich Threads"
-                value={w.runtime.richThreads ? "CopilotKit Intelligence" : "Not connected"}
+                value={
+                  threadError
+                    ? "Offline · using local history"
+                    : w.runtime.richThreads
+                      ? "CopilotKit Intelligence"
+                      : "Local history"
+                }
               />
               <Button
                 small
@@ -1361,18 +1480,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                 Refresh connections
               </Button>
             </View>
-          ) : (
-            <View style={{ gap: 14 }}>
-              <Text style={s.text}>
-                The OpenBot adapter is available in this open-source project. A live OpenBot backend
-                has not been configured.
-              </Text>
-              <Text style={s.muted}>
-                Your current computer uses OpenMuse’s persistent Chromium worker. OpenBot
-                integration will expand the execution backend while keeping this interface.
-              </Text>
-            </View>
-          )}
+          ) : null}
         </Sheet>
       )}
     </View>

@@ -9,6 +9,8 @@ Built with CopilotKit React Native for iOS, Android, and web.
 
 [Quick start](#quick-start) · [Demo](#demo) · [Features](#features) · [Architecture](#architecture) · [Docs](docs/README.md) · [Contributing](CONTRIBUTING.md)
 
+**Windows quick start:** after installing Node.js 22+ and pnpm, run `cd C:\open-muse; pnpm install; pnpm start:local` in PowerShell. The app opens at [http://localhost:8081](http://localhost:8081). See [Windows setup and optional services](docs/WINDOWS-START.md).
+
 [![CI](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml/badge.svg)](https://github.com/CopilotKit/OpenMuse/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -48,11 +50,13 @@ The computer combines **persistent Chromium and an optional Linux workspace**. T
 
 | Surface | What runs in this alpha |
 | --- | --- |
+| **Home / Today** | Daily command center with today's calendar and inbox, pending reviews, active durable tasks, recent activity, goal milestone progress, and project/routine summaries. **Plan my day** starts a natural-language request in Chat. |
 | **Chat** | CopilotKit headless chat with streamed AG-UI events, mailbox search and reading, send/stop in one input pill, a visible follow-up queue, retained drafts, delegated tasks, and inline email, browser, PDF, plan, and finance cards. |
 | **Agent computer** | Persistent browser profiles and takeover console; optional isolated Linux terminal, saved command receipts, editable workspace files, and PDF transfer. |
 | **Activity** | Durable task plans, progress, input requests, pause/resume/cancel/retry, approvals, and saved receipts. SQL leases recover interrupted work. |
 | **Ideas** | Suggestions with source evidence; edit, accept, or dismiss. Sent replies and completed matching work are excluded. |
 | **Goals & Tracking** | Goals and milestones; recurring public-page checks for changes, text availability, or USD price thresholds, with deduplicated alerts and failure backoff. |
+| **Projects & Routines** | Persistent owner-scoped project workspaces for tasks, goals, notes, files, links, and instructions; time-zone-aware routines create durable scheduled tasks using safe built-in read-and-plan steps. See [Projects](docs/PROJECTS.md) and [Routines](docs/ROUTINES.md). |
 | **Documents** | Email attachment → PDF → requested form values → filled copy → reviewed reply → receipt. Native/web PDF viewing, paging, zoom, supported fields, and sharing. |
 | **Finance** | Import transaction CSV to create a spending summary with categories, transactions, and a savings-goal action. |
 | **Gmail & Calendar** | Google OAuth adapters, complete mail threads, drafts/attachments, calendar discovery, and reviewed event creation/update/deletion. Live credentials required. |
@@ -61,28 +65,32 @@ The computer combines **persistent Chromium and an optional Linux workspace**. T
 
 The [feature inventory](docs/FEATURES.md) describes implemented capabilities and planned extensions. Health/bank/social connectors, device push, voice, generated executable tools, and automatic reservations/payments are on the [roadmap](ROADMAP.md).
 
+For a practical daily workflow and the current desktop/phone boundaries, see [Using OpenMuse day to day](docs/DAILY_WORKFLOW.md).
+
 ## Quick start
 
-**Requirements:** Node 24 LTS, pnpm 11.19.0, and a CopilotKit Intelligence project key. The local sample app needs no model, Google account, or Docker.
+**Requirements:** Node.js 22+ and pnpm 11.19.0. The Windows `start:local` command runs the sample workspace with local conversation history; you do not need a model API key, Google account, Docker, or CopilotKit Intelligence key for the sample flows. Live model chat, Google account access, saved cloud conversations, and computer features are optional integrations with separate setup requirements.
 
-```sh
-git clone https://github.com/CopilotKit/OpenMuse.git openmuse
-cd openmuse
+```powershell
+git clone https://github.com/harharmahdev003-dotcom/Open-Muse-My-Dashboard.git open-muse
+cd open-muse
 pnpm install --frozen-lockfile
-cp .env.example .env
-npx copilotkit@latest login
-npx copilotkit@latest project select
-# Set CPK_INTELLIGENCE_API_KEY in .env to the generated server-only project key.
-pnpm dev
+pnpm start:local
 ```
 
-In another terminal:
+Open [http://localhost:8081](http://localhost:8081). The local API health endpoint is [http://localhost:8787/api/health](http://localhost:8787/api/health). `pnpm start:local` starts the API and web UI without stopping services that already occupy their ports. On later laptop starts, run `pnpm start:local` from the project folder again.
 
-```sh
-pnpm dev:web
-```
+For macOS/Linux, configure the server-only `CPK_INTELLIGENCE_API_KEY` in `.env`, then run `pnpm dev` and `pnpm dev:web` in separate terminals. See [.env.example](.env.example) and [service setup](docs/WINDOWS-START.md) before enabling external accounts.
 
-Open [localhost:8081](http://localhost:8081). The API runs at [localhost:8787/api/health](http://localhost:8787/api/health).
+### Use it in a daily routine
+
+1. Start in **Today** to review the day and choose a priority.
+2. Use **Projects** to keep related goals, notes, links, files, and tasks together.
+3. Use **Routines** for recurring read-and-plan checklists.
+4. Ask **Chat** to organize a task. Review saved progress in **Activity** and any proposed external action before approval.
+5. Treat sample Gmail and Calendar entries as fictional. Connect real Google services only after following the OAuth setup below.
+
+The local sample assistant supports built-in guided task flows and workspace planning. Open-ended model chat requires a configured model provider. **Agent computer** is an optional isolated browser/Linux workspace; it is not access to the Windows desktop. **OpenBot** is an optional adapter extension point and has no live backend by default. See [Using OpenMuse day to day](docs/DAILY_WORKFLOW.md) for a practical walkthrough.
 
 ### Try it
 

@@ -43,6 +43,7 @@ export interface Config {
   agentUrl?: string;
   agentToken?: string;
   intelligenceApiKey?: string;
+  richThreadsEnabled?: boolean;
   googleClientId?: string;
   googleClientSecret?: string;
   googleRedirectUri: string;
@@ -128,6 +129,7 @@ export function readConfig(): Config {
     agentUrl: process.env.AGENT_URL,
     agentToken: process.env.AGENT_TOKEN,
     intelligenceApiKey: required("CPK_INTELLIGENCE_API_KEY", intelligenceKeyRequiredMessage),
+    richThreadsEnabled: process.env.CPK_INTELLIGENCE_API_KEY !== "local-preview-only",
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: `${publicUrl}/api/google/callback`,

@@ -270,11 +270,26 @@ export function ChatScreen({
       setError("");
       if (message) agent.addMessage({ id: message.id, role: "user", content: message.text });
       try {
-        await runConversationTurn(
-          agentId,
-          () => copilotkit.runAgent({ agent }),
-          (onError) => copilotkit.subscribe({ onError }),
-        );
+        if (!richThreads && w.runtime.provider === "sample") {
+          const prompt =
+            message?.text ||
+            String(agent.messages.filter((item) => item.role === "user").at(-1)?.content ?? "");
+          const reply = await api.request<{ content: string }>("/api/local-chat", {
+            prompt,
+            requestId: message?.id ?? `local-${Date.now()}`,
+          });
+          agent.addMessage({
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: reply.content,
+          });
+        } else {
+          await runConversationTurn(
+            agentId,
+            () => copilotkit.runAgent({ agent }),
+            (onError) => copilotkit.subscribe({ onError }),
+          );
+        }
         await Promise.all([refresh(), refreshAgent()]);
       } finally {
         try {
@@ -290,7 +305,20 @@ export function ChatScreen({
         }
       }
     },
-    [agent, agentId, copilotkit, isReady, loaded, refresh, refreshAgent, saveHistory, queue],
+    [
+      agent,
+      agentId,
+      api,
+      copilotkit,
+      isReady,
+      loaded,
+      refresh,
+      refreshAgent,
+      richThreads,
+      saveHistory,
+      queue,
+      w.runtime.provider,
+    ],
   );
   const runQueued = useCallback(
     async (message: QueuedMessage) => {

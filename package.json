@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "tsx watch apps/server/src/index.ts",
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start-openmuse.ps1",
     "dev:demo": "tsx apps/server/src/demo/entry.ts",
     "dev:mobile": "pnpm --dir apps/mobile start",
     "dev:web": "pnpm --dir apps/mobile web",

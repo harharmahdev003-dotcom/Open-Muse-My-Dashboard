@@ -2,12 +2,25 @@ node_modules/
 .expo/
 dist/
 build/
-.env
-.env.local
-.env.*.local
+.turbo/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Keep the checked-in template, but never publish local credentials.
+.env*
+!.env.example
+**/.env*
+!**/.env.example
+
+# Local databases, tokens, browser profiles, and runtime files.
 .openmuse/
 apps/mobile/ios/
 apps/mobile/android/
 .DS_Store
-*.tsbuildinfo
 artifacts/
+
+# Local scratch files and private signing material.
+/work/
+*.pem
+*.key

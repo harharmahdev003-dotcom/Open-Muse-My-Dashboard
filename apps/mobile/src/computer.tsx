@@ -155,7 +155,7 @@ export function ComputerSheet() {
   return (
     <Sheet
       title="Agent computer"
-      subtitle="Your agent works here. Step in whenever you need."
+      subtitle="Persistent browser sessions and an optional isolated Linux workspace. This does not control your Windows desktop."
       onClose={close}
     >
       <View style={{ gap: 20 }}>
@@ -169,7 +169,7 @@ export function ComputerSheet() {
               <Text style={s.muted}>
                 {available
                   ? "Your agent’s browser and documents, in one place."
-                  : "Start the browser worker to connect this computer."}
+                  : "Browser is offline. Start Docker Desktop, then use the OpenMuse startup script to start its browser worker."}
               </Text>
             </View>
           </View>
